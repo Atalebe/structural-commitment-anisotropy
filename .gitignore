@@ -1,7 +1,39 @@
-data/
-*.hdf5
-*.fits
+# LaTeX build junk
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# If you generate PDFs locally
+*.pdf
+
+# Data outputs
 *.npy
-__pycache__/
-.ipynb_checkpoints/
-.env
+*.npz
+*.npz
+*.csv
+
+# Generated figures that should live in figures/ if you keep them
+fig_*.png
+tng50_fig_*.png
+sdss_fig_*.png
+
+# Local scratch
+actual.txt
+expected.txt

@@ -37,3 +37,22 @@ sdss_fig_*.png
 # Local scratch
 actual.txt
 expected.txt
+
+# Python junk
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Big binary outputs
+*.npy
+*.npz
+*.pkl
+
+# Generated figures (optional)
+*.png
+
+# Local output dirs (ignore contents, keep placeholder docs)
+data/**
+results/**
+!data/README.md
+!results/README.md

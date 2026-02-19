@@ -1,0 +1,17 @@
+\begin{table}[t]
+\centering
+\caption{Mask-aware shuffled-weight null comparison across SDSS DR8 and synthetic-sky catalogs from TNG50 and TNG300. Columns report the geometric dipole $|D_{\rm geo}|$, the weighted dipole $|D_{\rm obs}|$, the null mean $\langle|D|\rangle_{\rm null}$, the null scatter $\sigma_{\rm null}$, the excess $\Delta|D|$, and the corresponding significance.}
+\label{tab:maskaware_compare}
+\begin{tabular}{l l r c c c c c c}
+\hline
+Dataset & Weight & $N$ & $|D_{\rm geo}|$ & $|D_{\rm obs}|$ & $\langle|D|\rangle_{\rm null}$ & $\sigma_{\rm null}$ & $\Delta|D|$ & $z$--score \\
+\hline
+SDSS & mass & 200000 & 0.5983 & 0.6279 & 0.5983 & 0.0015 & 0.0296 & 19.43 \\
+SDSS & rankmass & 200000 & 0.5983 & 0.6240 & 0.5983 & 0.0007 & 0.0257 & 38.45 \\
+TNG50 & mass & 3017 & 0.0519 & 0.0882 & 0.0861 & 0.0344 & 0.0021 & 0.06 \\
+TNG50 & rankmass & 3017 & 0.0519 & 0.0604 & 0.0530 & 0.0061 & 0.0074 & 1.22 \\
+TNG300 & mass & 69331 & 0.0499 & 0.0858 & 0.0516 & 0.0085 & 0.0342 & 4.04 \\
+TNG300 & rankmass & 69331 & 0.0499 & 0.0567 & 0.0499 & 0.0012 & 0.0068 & 5.43 \\
+\hline
+\end{tabular}
+\end{table}

@@ -1,220 +1,337 @@
 #!/usr/bin/env python3
-import os
+import argparse
 import numpy as np
 import pandas as pd
 
 # -----------------------------
-# Config
+# Geometry helpers
 # -----------------------------
-CATALOG = "/home/satal/structural-commitment-anisotropy/data/sdss_dr8/sdss_dr8_analysis_base_v1.csv"
-Z_MIN, Z_MAX = 0.020, 0.100
-Z_EDGES = np.array([0.02, 0.05, 0.08])  # bins: [0.02,0.05), [0.05,0.08)
-N_NULL = 1000
-SEED = 12345
-WEIGHT_COL = "LGM_TOT_P50"  # log10 stellar mass
-OUT_NPZ = "sdss_structural_dipole_mask_null_results_normed.npz"
-
-# -----------------------------
-# Helpers
-# -----------------------------
-def radec_to_unitvec(ra_deg, dec_deg):
-    ra = np.deg2rad(ra_deg)
-    dec = np.deg2rad(dec_deg)
+def rhat_from_radec(ra_deg, dec_deg):
+    ra = np.deg2rad(ra_deg.astype(float))
+    dec = np.deg2rad(dec_deg.astype(float))
     x = np.cos(dec) * np.cos(ra)
     y = np.cos(dec) * np.sin(ra)
     z = np.sin(dec)
-    return np.stack([x, y, z], axis=1)  # (N,3)
+    return np.vstack([x, y, z]).T
 
-def unitvec_to_radec(v):
+def radec_from_vec(v):
     v = np.asarray(v, dtype=float)
-    v = v / (np.linalg.norm(v) + 1e-30)
-    x, y, z = v
+    n = np.linalg.norm(v)
+    if n <= 0:
+        return np.nan, np.nan
+    x, y, z = v / n
     ra = np.rad2deg(np.arctan2(y, x)) % 360.0
-    dec = np.rad2deg(np.arcsin(np.clip(z, -1.0, 1.0)))
+    dec = np.rad2deg(np.arcsin(np.clip(z, -1, 1)))
     return ra, dec
 
-def normalized_dipole(nhat, weights):
+def angle_deg(v1, v2):
+    v1 = np.asarray(v1, dtype=float)
+    v2 = np.asarray(v2, dtype=float)
+    n1 = np.linalg.norm(v1)
+    n2 = np.linalg.norm(v2)
+    if n1 <= 0 or n2 <= 0:
+        return np.nan
+    c = np.clip(np.dot(v1, v2) / (n1 * n2), -1, 1)
+    return float(np.rad2deg(np.arccos(c)))
+
+# -----------------------------
+# Weights
+# -----------------------------
+def compute_weights(df, mode, col_lgm):
     """
-    D = sum_i w_i * n_i / sum_i w_i
+    col_lgm is treated as:
+      - log10(M*) when mode in {mass, logmass, rankmass, clippedmass}
     """
-    w = np.asarray(weights, dtype=float)
-    s = np.sum(w)
-    if not np.isfinite(s) or s <= 0:
-        raise RuntimeError("Sum of weights is non-positive or invalid.")
-    v = np.sum(nhat * w[:, None], axis=0) / s
+    x = df[col_lgm].astype(float).to_numpy()
+
+    if mode == "mass":
+        # interpret x as log10(M*), return linear mass weights
+        w = np.power(10.0, x)
+    elif mode == "logmass":
+        # use shifted log-mass as a positive weight
+        x0 = np.nanmin(x)
+        w = (x - x0) + 1e-6
+    elif mode == "rankmass":
+        # rank-based weights (robust to outliers)
+        order = np.argsort(x)
+        ranks = np.empty_like(order, dtype=float)
+        ranks[order] = np.arange(1, len(x) + 1, dtype=float)
+        w = ranks / np.mean(ranks)
+    elif mode == "clippedmass":
+        # convert log10(M*) -> mass, clip extreme tails, normalize
+        m = np.power(10.0, x)
+        lo = np.percentile(m, 1.0)
+        hi = np.percentile(m, 99.0)
+        m = np.clip(m, lo, hi)
+        w = m / np.mean(m)
+    else:
+        raise ValueError(f"Unknown weight-mode: {mode}")
+
+    # final sanity
+    w = np.asarray(w, dtype=float)
+    bad = ~np.isfinite(w)
+    if np.any(bad):
+        w[bad] = 0.0
+    w[w < 0] = 0.0
+    return w
+
+# -----------------------------
+# Dipole estimator (normalized, bounded by 1)
+# -----------------------------
+def dipole_vector(ra, dec, weights=None):
+    rhat = rhat_from_radec(ra, dec)
+    if weights is None:
+        w = np.ones(rhat.shape[0], dtype=float)
+    else:
+        w = np.asarray(weights, dtype=float)
+    sw = np.sum(w)
+    if sw <= 0:
+        v = np.zeros(3, dtype=float)
+    else:
+        v = np.sum(rhat * w[:, None], axis=0) / sw
     amp = float(np.linalg.norm(v))
-    return v, amp
+    ra_v, dec_v = radec_from_vec(v)
+    return v, amp, ra_v, dec_v
 
-def shuffled_null_amps(nhat, weights, n_null, rng):
-    """
-    Keep positions fixed (mask preserved), shuffle weights across objects.
-    Return distribution of |D| under shuffling.
-    """
-    w = np.asarray(weights, dtype=float)
-    amps = np.zeros(n_null, dtype=float)
-    for k in range(n_null):
-        w_shuf = rng.permutation(w)
-        _, a = normalized_dipole(nhat, w_shuf)
-        amps[k] = a
-        if (k + 1) % 200 == 0:
-            print(f"  Realisation {k+1}/{n_null}")
-    return amps
+# -----------------------------
+# IO + filtering
+# -----------------------------
+def require_cols(df, cols, context=""):
+    missing = [c for c in cols if c and c not in df.columns]
+    if missing:
+        print("\n[ERROR] Missing required columns:", missing)
+        print("[INFO] Available columns:", list(df.columns))
+        if context:
+            print("[INFO] Context:", context)
+        raise SystemExit(2)
 
-def zscore(obs, dist):
-    mu = float(np.mean(dist))
-    sig = float(np.std(dist, ddof=1))
-    if sig <= 0:
-        return mu, sig, np.inf
-    return mu, sig, (obs - mu) / sig
+def parse_bins(zmin, zmax, z_bins_str):
+    # user may pass: "0.02,0.05,0.08"
+    if z_bins_str is None or str(z_bins_str).strip() == "":
+        return np.array([zmin, zmax], dtype=float)
+    parts = [p.strip() for p in str(z_bins_str).split(",") if p.strip() != ""]
+    inner = np.array([float(p) for p in parts], dtype=float)
+    edges = [float(zmin)]
+    for v in inner:
+        if v > zmin and v < zmax:
+            edges.append(float(v))
+    edges.append(float(zmax))
+    edges = np.array(sorted(set(edges)), dtype=float)
+    return edges
 
-def load_and_filter():
-    print("Loading SDSS DR8 catalog from:")
-    print(f"  {CATALOG}")
-    df = pd.read_csv(CATALOG)
+def load_and_filter(cfg, rng):
+    df = pd.read_csv(cfg.input)
+    print("Loading SDSS DR8 catalog from:\n ", cfg.input)
     print(f"Initial N (raw): {len(df)}")
 
-    if "RELIABLE" in df.columns:
-        df = df[df["RELIABLE"] == 1].copy()
-        print(f"After RELIABLE == 1 cut: N = {len(df)}")
+    # reliability cut is optional
+    col_rel = cfg.col_reliable
+    if col_rel is not None:
+        col_rel = str(col_rel)
+        if col_rel.strip() == "":
+            col_rel = None
 
-    need = ["RA", "DEC", "Z", WEIGHT_COL]
-    df = df.dropna(subset=need).copy()
-    print(f"After dropping NaN RA/DEC/Z/{WEIGHT_COL}: N = {len(df)}")
+    need = [cfg.col_ra, cfg.col_dec, cfg.col_z, cfg.col_lgm]
+    if col_rel is not None:
+        need.append(col_rel)
 
-    df = df[(df["Z"] >= Z_MIN) & (df["Z"] <= Z_MAX)].copy()
-    print(f"After {Z_MIN:.3f} <= z <= {Z_MAX:.3f} cut: N = {len(df)}")
+    require_cols(df, need, context="load_and_filter()")
+
+    # drop NaNs
+    df = df.dropna(subset=need)
+
+    # reliability cut
+    if col_rel is not None:
+        df = df[df[col_rel].astype(int) == 1]
+        print(f"After {col_rel} == 1 cut: N = {len(df)}")
+
+    # z cut
+    z = df[cfg.col_z].astype(float).to_numpy()
+    m = (z >= cfg.zmin) & (z <= cfg.zmax)
+    df = df.loc[m].copy()
+    print(f"After {cfg.zmin:.3f} <= z <= {cfg.zmax:.3f} cut: N = {len(df)}")
+
+    # optional shuffle of z assignments (robustness)
+    if cfg.shuffle_z:
+        zvals = df[cfg.col_z].astype(float).to_numpy()
+        df[cfg.col_z] = rng.permutation(zvals)
+        print("Applied --shuffle-z (permuted Z within filtered sample).")
+
+    # optional downsample
+    if cfg.n_max is not None and cfg.n_max > 0 and len(df) > cfg.n_max:
+        idx = rng.choice(len(df), size=cfg.n_max, replace=False)
+        df = df.iloc[idx].copy()
+        print(f"Applied --n-max {cfg.n_max}: N = {len(df)}")
 
     return df
+
+# -----------------------------
+# Null test
+# -----------------------------
+def shuffled_null_amplitudes(ra, dec, weights, rng, n_null, progress_every=0):
+    amps = np.empty(n_null, dtype=float)
+    n = len(weights)
+    for i in range(n_null):
+        perm = rng.permutation(n)
+        _, a, _, _ = dipole_vector(ra, dec, weights=weights[perm])
+        amps[i] = a
+        if progress_every and (i + 1) % progress_every == 0:
+            print(f"  Realisation {i+1}/{n_null}")
+    return amps
 
 # -----------------------------
 # Main
 # -----------------------------
 def main():
-    rng = np.random.default_rng(SEED)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", default="data/sdss_dr8/sdss_dr8_analysis_base_v1.csv")
+    ap.add_argument("--out", default="sdss_structural_dipole_mask_null_results_normed.npz")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n-null", type=int, default=1000)
+    ap.add_argument("--zmin", type=float, default=0.020)
+    ap.add_argument("--zmax", type=float, default=0.100)
+    ap.add_argument("--z-bins", default="0.02,0.05,0.08")
+    ap.add_argument("--n-max", type=int, default=None)
 
-    df = load_and_filter()
-    ra = df["RA"].to_numpy()
-    dec = df["DEC"].to_numpy()
-    z = df["Z"].to_numpy()
-    lgm = df[WEIGHT_COL].to_numpy()
+    ap.add_argument("--weight-mode", choices=["mass", "logmass", "rankmass", "clippedmass"], default="mass")
+    ap.add_argument("--shuffle-z", action="store_true")
+    ap.add_argument("--jackknife-ra", type=int, default=0)
 
-    nhat = radec_to_unitvec(ra, dec)
+    ap.add_argument("--col-ra", default="RA")
+    ap.add_argument("--col-dec", default="DEC")
+    ap.add_argument("--col-z", default="Z")
+    ap.add_argument("--col-lgm", default="LGM_TOT_P50")
+    ap.add_argument("--col-reliable", default="RELIABLE")
 
-    # weights: w = 10**LGM (stellar mass proxy)
-    w_mass = np.power(10.0, lgm)
+    cfg = ap.parse_args()
+    rng = np.random.default_rng(cfg.seed)
+
+    df = load_and_filter(cfg, rng)
+
+    ra = df[cfg.col_ra].astype(float).to_numpy()
+    dec = df[cfg.col_dec].astype(float).to_numpy()
+    z = df[cfg.col_z].astype(float).to_numpy()
 
     print("\n===== SDSS STRUCTURAL DIPOLE: MASK-AWARE NULL TEST (NORMALIZED) =====\n")
     print(f"Total galaxies used: N = {len(df)}")
-    print(f"Redshift range in sample: z_min = {z.min():.3f}, z_max = {z.max():.3f}\n")
+    print(f"Redshift range in sample: z_min = {z.min():.4f}, z_max = {z.max():.4f}")
 
-    # Global dipoles
-    print("---- Global dipoles (full mask) ----")
-    D_geo_vec, D_geo = normalized_dipole(nhat, np.ones(len(df)))
-    geo_ra, geo_dec = unitvec_to_radec(D_geo_vec)
+    # geometric
+    v_geo, a_geo, ra_geo, dec_geo = dipole_vector(ra, dec, weights=None)
+
+    # weights
+    w = compute_weights(df, cfg.weight_mode, cfg.col_lgm)
+    v_obs, a_obs, ra_obs, dec_obs = dipole_vector(ra, dec, weights=w)
+
+    print("\n---- Global dipoles (full mask) ----")
     print("Geometric (unweighted) dipole:")
-    print(f"  |D_geo|     = {D_geo:.4f}")
-    print(f"  (RA, DEC)   = ({geo_ra:.1f} deg, {geo_dec:.1f} deg)\n")
+    print(f"  |D_geo|     = {a_geo:.4f}")
+    print(f"  (RA, DEC)   = ({ra_geo:.1f} deg, {dec_geo:.1f} deg)\n")
 
-    D_obs_vec, D_obs = normalized_dipole(nhat, w_mass)
-    obs_ra, obs_dec = unitvec_to_radec(D_obs_vec)
-    angle = np.rad2deg(np.arccos(np.clip(
-        np.dot(D_geo_vec, D_obs_vec) / ((np.linalg.norm(D_geo_vec) * np.linalg.norm(D_obs_vec)) + 1e-30),
-        -1.0, 1.0
-    )))
-    print(f"Mass-weighted dipole (w = 10**{WEIGHT_COL.split('_')[0]}):")
-    print(f"  |D_obs|     = {D_obs:.4f}")
-    print(f"  (RA, DEC)   = ({obs_ra:.1f} deg, {obs_dec:.1f} deg)")
-    print(f"  Angle(D_geo, D_obs) = {angle:.2f} deg\n")
+    print(f"{cfg.weight_mode}-weighted dipole:")
+    print(f"  |D_obs|     = {a_obs:.4f}")
+    print(f"  (RA, DEC)   = ({ra_obs:.1f} deg, {dec_obs:.1f} deg)")
+    print(f"  Angle(D_geo, D_obs) = {angle_deg(v_geo, v_obs):.2f} deg\n")
 
-    # Global shuffled null
-    print(f"Building shuffled-weight null for GLOBAL sample (N_NULL = {N_NULL}) ...")
-    null_global = shuffled_null_amps(nhat, w_mass, N_NULL, rng)
-    mu_g, sig_g, z_g = zscore(D_obs, null_global)
+    print(f"Args: seed={cfg.seed}, N_NULL={cfg.n_null}")
+    print(f"Building shuffled-weight null for GLOBAL sample (N_NULL = {cfg.n_null}) .")
+
+    prog = max(1, cfg.n_null // 5)
+    amps_null = shuffled_null_amplitudes(ra, dec, w, rng, cfg.n_null, progress_every=prog)
+
+    mu = float(np.mean(amps_null))
+    sig = float(np.std(amps_null, ddof=1)) if cfg.n_null > 1 else np.nan
+    zscore = (a_obs - mu) / sig if sig > 0 else np.nan
 
     print("\n===== GLOBAL SHUFFLED NULL RESULTS (mask preserved) =====")
-    print(f"  <|D|>_null   = {mu_g:.4f}")
-    print(f"  sigma_null   = {sig_g:.4f}")
-    print(f"  |D_obs|      = {D_obs:.4f}")
-    print(f"  z-score      = {z_g:.2f} sigma\n")
+    print(f"  <|D|>_null   = {mu:.4f}")
+    print(f"  sigma_null   = {sig:.4f}")
+    print(f"  |D_obs|      = {a_obs:.4f}")
+    print(f"  z-score      = {zscore:.2f} sigma")
 
-    # Bins
-    print("===== BINNED MASK-AWARE RESULTS =====")
-    print(f"Redshift bins: {Z_EDGES}\n")
+    # binned
+    edges = parse_bins(cfg.zmin, cfg.zmax, cfg.z_bins)
+    print("\n===== BINNED MASK-AWARE RESULTS =====")
+    # print only inner edges like your previous output style
+    inner = edges[1:-1]
+    if len(inner) > 0:
+        print("Redshift bins:", inner)
+    else:
+        print("Redshift bins: (none)")
 
     bin_results = []
-    null_bins = []
-    for i in range(len(Z_EDGES) - 1):
-        z0, z1 = Z_EDGES[i], Z_EDGES[i + 1]
-        sel = (z >= z0) & (z < z1)
-        nbin = int(np.sum(sel))
-        print(f"Bin {i} [{z0:.3f}, {z1:.3f}): N = {nbin}")
-        if nbin < 1000:
-            print("  [WARN] Too few galaxies in this bin, skipping.\n")
-            bin_results.append(None)
-            null_bins.append(None)
+    for i in range(len(edges) - 1):
+        lo, hi = edges[i], edges[i + 1]
+        m = (z >= lo) & (z < hi) if i < len(edges) - 2 else (z >= lo) & (z <= hi)
+        dfb = df.loc[m]
+        if len(dfb) == 0:
             continue
+        ra_b = dfb[cfg.col_ra].astype(float).to_numpy()
+        dec_b = dfb[cfg.col_dec].astype(float).to_numpy()
+        w_b = compute_weights(dfb, cfg.weight_mode, cfg.col_lgm)
 
-        nh = nhat[sel]
-        w = w_mass[sel]
+        v_geo_b, a_geo_b, ra_geo_b, dec_geo_b = dipole_vector(ra_b, dec_b, None)
+        v_obs_b, a_obs_b, ra_obs_b, dec_obs_b = dipole_vector(ra_b, dec_b, w_b)
 
-        Dg_vec, Dg = normalized_dipole(nh, np.ones(nbin))
-        Dg_ra, Dg_dec = unitvec_to_radec(Dg_vec)
+        print(f"\nBin {i} [{lo:.3f}, {hi:.3f}): N = {len(dfb)}")
+        print(f"  Geometric dipole: |D_geo| = {a_geo_b:.4f}, (RA,DEC) = ({ra_geo_b:.1f}, {dec_geo_b:.1f})")
+        print(f"  Weighted dipole : |D_obs| = {a_obs_b:.4f}, (RA,DEC) = ({ra_obs_b:.1f}, {dec_obs_b:.1f})")
+        print(f"  Angle(D_geo, D_obs) = {angle_deg(v_geo_b, v_obs_b):.2f} deg")
+        print(f"  Building shuffled-weight null for bin {i} (N_NULL = {cfg.n_null}) .")
 
-        Do_vec, Do = normalized_dipole(nh, w)
-        Do_ra, Do_dec = unitvec_to_radec(Do_vec)
+        rng_b = np.random.default_rng(cfg.seed + 1000 + i)
+        prog_b = max(1, cfg.n_null // 5)
+        amps_b = shuffled_null_amplitudes(ra_b, dec_b, w_b, rng_b, cfg.n_null, progress_every=prog_b)
+        mu_b = float(np.mean(amps_b))
+        sig_b = float(np.std(amps_b, ddof=1)) if cfg.n_null > 1 else np.nan
+        z_b = (a_obs_b - mu_b) / sig_b if sig_b > 0 else np.nan
+        print(f"  <|D|>_null = {mu_b:.4f}, sigma_null = {sig_b:.4f}, |D_obs| = {a_obs_b:.4f}, z = {z_b:.2f} sigma")
 
-        ang = np.rad2deg(np.arccos(np.clip(
-            np.dot(Dg_vec, Do_vec) / ((np.linalg.norm(Dg_vec) * np.linalg.norm(Do_vec)) + 1e-30),
-            -1.0, 1.0
-        )))
+        bin_results.append((lo, hi, len(dfb), a_geo_b, a_obs_b, mu_b, sig_b, z_b, ra_obs_b, dec_obs_b))
 
-        print(f"  Geometric dipole: |D_geo| = {Dg:.4f}, (RA,DEC) = ({Dg_ra:.1f}, {Dg_dec:.1f})")
-        print(f"  Weighted dipole : |D_obs| = {Do:.4f}, (RA,DEC) = ({Do_ra:.1f}, {Do_dec:.1f})")
-        print(f"  Angle(D_geo, D_obs) = {ang:.2f} deg")
+    # jackknife in RA
+    jk = []
+    if cfg.jackknife_ra and cfg.jackknife_ra > 1:
+        K = int(cfg.jackknife_ra)
+        print(f"\n===== JACKKNIFE (leave-one-out RA sectors: K={K}) =====")
+        ra_all = ra
+        for k in range(K):
+            lo = 360.0 * k / K
+            hi = 360.0 * (k + 1) / K
+            drop = (ra_all >= lo) & (ra_all < hi)
+            keep = ~drop
+            ra_k = ra[keep]
+            dec_k = dec[keep]
+            w_k = w[keep]
 
-        print(f"  Building shuffled-weight null for bin {i} (N_NULL = {N_NULL}) ...")
-        null_i = shuffled_null_amps(nh, w, N_NULL, rng)
-        mu_i, sig_i, z_i = zscore(Do, null_i)
-        print(f"  <|D|>_null = {mu_i:.4f}, sigma_null = {sig_i:.4f}, |D_obs| = {Do:.4f}, z = {z_i:.2f} sigma\n")
+            v_geo_k, a_geo_k, _, _ = dipole_vector(ra_k, dec_k, None)
+            v_obs_k, a_obs_k, _, _ = dipole_vector(ra_k, dec_k, w_k)
+            ang = angle_deg(v_geo_k, v_obs_k)
+            print(f"  drop sector {k} [{lo:.1f},{hi:.1f}): |D_geo|={a_geo_k:.4f}, |D_obs|={a_obs_k:.4f}, angle={ang:.2f} deg")
+            jk.append((k, lo, hi, a_geo_k, a_obs_k, ang))
 
-        bin_results.append({
-            "z0": z0, "z1": z1, "N": nbin,
-            "D_geo_vec": Dg_vec, "D_geo": Dg, "D_geo_ra": Dg_ra, "D_geo_dec": Dg_dec,
-            "D_obs_vec": Do_vec, "D_obs": Do, "D_obs_ra": Do_ra, "D_obs_dec": Do_dec,
-            "angle_deg": ang,
-            "null_mean": mu_i, "null_sigma": sig_i, "null_z": z_i
-        })
-        null_bins.append(null_i)
-
-    # Save
+    # save
     np.savez(
-        OUT_NPZ,
-        config=dict(
-            catalog=CATALOG, z_min=Z_MIN, z_max=Z_MAX,
-            z_edges=Z_EDGES.tolist(), N_NULL=N_NULL, seed=SEED,
-            weight_col=WEIGHT_COL, weight_def="w=10**LGM"
-        ),
-        global_N=len(df),
-        global_z_min=float(z.min()),
-        global_z_max=float(z.max()),
-        global_D_geo_vec=D_geo_vec,
-        global_D_geo=D_geo,
-        global_D_geo_ra=geo_ra,
-        global_D_geo_dec=geo_dec,
-        global_D_obs_vec=D_obs_vec,
-        global_D_obs=D_obs,
-        global_D_obs_ra=obs_ra,
-        global_D_obs_dec=obs_dec,
-        global_angle_deg=angle,
-        null_global_amps=null_global,
-        null_global_mean=mu_g,
-        null_global_sigma=sig_g,
-        null_global_z=z_g,
-        bin_results=bin_results,
-        null_bins=null_bins
+        cfg.out,
+        config=vars(cfg),
+        N=len(df),
+        global_geo_vector=v_geo,
+        global_geo_amplitude=a_geo,
+        global_geo_ra=ra_geo,
+        global_geo_dec=dec_geo,
+        global_obs_vector=v_obs,
+        global_obs_amplitude=a_obs,
+        global_obs_ra=ra_obs,
+        global_obs_dec=dec_obs,
+        global_angle_deg=angle_deg(v_geo, v_obs),
+        null_amplitudes=amps_null,
+        null_mu=mu,
+        null_sigma=sig,
+        null_zscore=zscore,
+        bin_results=np.array(bin_results, dtype=float) if len(bin_results) else np.zeros((0, 11)),
+        jackknife=np.array(jk, dtype=float) if len(jk) else np.zeros((0, 6)),
     )
-
-    print(f"Saved normalized mask-aware null results to: {OUT_NPZ}")
+    print(f"\nSaved normalized mask-aware null results to: {cfg.out}")
     print("Done.")
 
 if __name__ == "__main__":

@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\caption{Weight-mode sensitivity test for the mask-aware dipole estimator across SDSS and TNG mock skies.}
+\label{tab:maskaware_weightmode_sensitivity}
+\begin{tabular}{l l r r r r r r r r}
+\hline
+Dataset & Weight & $N$ & $|D_{\rm geo}|$ & $|D_{\rm obs}|$ & $\langle |D| \rangle_{\rm null}$ & $\sigma_{\rm null}$ & $z$ & $|D_{\rm phys}|$ & Angle [deg]\\
+\hline
+SDSS & mass & 200000 & 0.5983 & 0.6279 & 0.5983 & 0.001523 & 19.43 & 0.02960 & 1.82\\
+SDSS & logmass & 200000 & 0.5983 & 0.5992 & 0.5983 & 0.000033 & 29.58 & 0.00099 & 0.05\\
+SDSS & clippedmass & 200000 & 0.5983 & 0.6279 & 0.5983 & 0.001342 & 22.04 & 0.02958 & 1.72\\
+SDSS & rankmass & 200000 & 0.5983 & 0.6240 & 0.5983 & 0.000669 & 38.45 & 0.02573 & 1.41\\
+TNG50 & mass & 3017 & 0.0519 & 0.0882 & 0.0861 & 0.034358 & 0.06 & 0.00213 & 2.98\\
+TNG50 & logmass & 3017 & 0.0519 & 0.0585 & 0.0538 & 0.008620 & 0.54 & 0.00469 & 6.30\\
+TNG50 & clippedmass & 3017 & 0.0519 & 0.0397 & 0.0634 & 0.021510 & -1.10 & -0.02370 & 8.26\\
+TNG50 & rankmass & 3017 & 0.0519 & 0.0604 & 0.0530 & 0.006060 & 1.22 & 0.00741 & 4.57\\
+TNG300 & mass & 69331 & 0.0499 & 0.0858 & 0.0516 & 0.008474 & 4.04 & 0.03422 & 4.39\\
+TNG300 & logmass & 69331 & 0.0499 & 0.0610 & 0.0500 & 0.001875 & 5.90 & 0.01106 & 1.57\\
+TNG300 & clippedmass & 69331 & 0.0499 & 0.0678 & 0.0503 & 0.004176 & 4.18 & 0.01747 & 3.63\\
+TNG300 & rankmass & 69331 & 0.0499 & 0.0567 & 0.0499 & 0.001248 & 5.43 & 0.00678 & 1.18\\
+\hline
+\end{tabular}
+\end{table}

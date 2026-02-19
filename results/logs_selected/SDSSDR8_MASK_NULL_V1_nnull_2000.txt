@@ -1,0 +1,80 @@
+Loading SDSS DR8 catalog from:
+  data/sdss_dr8/sdss_dr8_analysis_base_v1.csv
+Initial N (raw): 200000
+After RELIABLE == 1 cut: N = 200000
+After dropping NaN RA/DEC/Z/LGM_TOT_P50: N = 200000
+After 0.020 <= z <= 0.100 cut: N = 200000
+
+===== SDSS STRUCTURAL DIPOLE: MASK-AWARE NULL TEST (NORMALIZED) =====
+
+Total galaxies used: N = 200000
+Redshift range in sample: z_min = 0.020, z_max = 0.100
+
+---- Global dipoles (full mask) ----
+Geometric (unweighted) dipole:
+  |D_geo|     = 0.5983
+  (RA, DEC)   = (188.9 deg, 38.0 deg)
+
+Mass-weighted dipole (w = 10**LGM):
+  |D_obs|     = 0.6279
+  (RA, DEC)   = (189.5 deg, 36.3 deg)
+  Angle(D_geo, D_obs) = 1.82 deg
+
+Args: seed=0, N_NULL=2000
+Building shuffled-weight null for GLOBAL sample (N_NULL = 2000) ...
+  Realisation 200/2000
+  Realisation 400/2000
+  Realisation 600/2000
+  Realisation 800/2000
+  Realisation 1000/2000
+  Realisation 1200/2000
+  Realisation 1400/2000
+  Realisation 1600/2000
+  Realisation 1800/2000
+  Realisation 2000/2000
+
+===== GLOBAL SHUFFLED NULL RESULTS (mask preserved) =====
+  <|D|>_null   = 0.5983
+  sigma_null   = 0.0015
+  |D_obs|      = 0.6279
+  z-score      = 19.43 sigma
+
+===== BINNED MASK-AWARE RESULTS =====
+Redshift bins: [0.02 0.05 0.08]
+
+Bin 0 [0.020, 0.050): N = 53406
+  Geometric dipole: |D_geo| = 0.6010, (RA,DEC) = (187.4, 39.4)
+  Weighted dipole : |D_obs| = 0.6275, (RA,DEC) = (189.9, 38.9)
+  Angle(D_geo, D_obs) = 2.06 deg
+  Building shuffled-weight null for bin 0 (N_NULL = 2000) ...
+  Realisation 200/2000
+  Realisation 400/2000
+  Realisation 600/2000
+  Realisation 800/2000
+  Realisation 1000/2000
+  Realisation 1200/2000
+  Realisation 1400/2000
+  Realisation 1600/2000
+  Realisation 1800/2000
+  Realisation 2000/2000
+  <|D|>_null = 0.6007, sigma_null = 0.0042, |D_obs| = 0.6275, z = 6.34 sigma
+
+Bin 1 [0.050, 0.080): N = 85822
+  Geometric dipole: |D_geo| = 0.6025, (RA,DEC) = (189.1, 39.2)
+  Weighted dipole : |D_obs| = 0.6316, (RA,DEC) = (189.3, 37.9)
+  Angle(D_geo, D_obs) = 1.33 deg
+  Building shuffled-weight null for bin 1 (N_NULL = 2000) ...
+  Realisation 200/2000
+  Realisation 400/2000
+  Realisation 600/2000
+  Realisation 800/2000
+  Realisation 1000/2000
+  Realisation 1200/2000
+  Realisation 1400/2000
+  Realisation 1600/2000
+  Realisation 1800/2000
+  Realisation 2000/2000
+  <|D|>_null = 0.6025, sigma_null = 0.0022, |D_obs| = 0.6316, z = 12.94 sigma
+
+Saved normalized mask-aware null results to: sdss_structural_dipole_mask_null_results_normed.npz
+Done.

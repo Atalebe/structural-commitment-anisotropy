@@ -1,58 +1,44 @@
-# LaTeX build junk
-*.aux
-*.bbl
-*.blg
-*.fdb_latexmk
-*.fls
-*.log
-*.out
-*.synctex.gz
-*.toc
-*.lof
-*.lot
-*.nav
-*.snm
-*.vrb
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+.ipynb_checkpoints/
 
 # OS/editor
 .DS_Store
-Thumbs.db
+*.swp
+*.swo
 .vscode/
-.idea/
 
-# If you generate PDFs locally
-*.pdf
+# Big / raw data (keep scripts that generate them)
+data/raw/
+data/**/groupcat_*/
+data/**/fof_subhalo_tab_*.hdf5
+*.hdf5
 
-# Data outputs
+# Large intermediate catalogs (keep small summaries)
+results/**/catalogs/
+results/**/logs/  # <- only ignore if logs are huge; otherwise remove this line
+
+# Generated binaries
+*.npz
 *.npy
-*.npz
-*.npz
-*.csv
+*.pkl
+# raw / large data
+data/
+!/data/README.md
+!/data/manifest*.csv
+!/data/*.md
 
-# Generated figures that should live in figures/ if you keep them
-fig_*.png
-tng50_fig_*.png
-sdss_fig_*.png
+# windows-mounted TNG trees or copies
+TNG50-1/
+TNG300-1/
 
-# Local scratch
+# big intermediate catalogs (optional)
+results/**/catalogs/
+results/**/tng*_sdsscols.csv
+
+# random scratch
 actual.txt
 expected.txt
-
-# Python junk
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
-
-# Big binary outputs
-*.npy
-*.npz
-*.pkl
-
-# Generated figures (optional)
-*.png
-
-# Local output dirs (ignore contents, keep placeholder docs)
-data/**
-results/**
-!data/README.md
-!results/README.md
